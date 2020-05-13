@@ -101,3 +101,20 @@ class DICE():
 
         return DICE
 
+def cropping3D(image, crop_z, crop_y, crop_x):
+    """
+    image : only 5D tensor
+    
+    """
+    size_z, size_y, size_x = image.size()[2:]
+    crop_z = slice(crop_z[0], size_z - crop_z[1])
+    crop_y = slice(crop_y[0], size_y - crop_y[1])
+    crop_x = slice(crop_x[0], size_x - crop_x[1])
+    
+    cropped_image = image[..., crop_z, crop_y, crop_x]
+    
+    return cropped_image
+
+
+
+

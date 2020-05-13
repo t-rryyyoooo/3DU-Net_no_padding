@@ -1,21 +1,25 @@
 import torch
 from torch import nn
+from utils import cropping3D
 
-class DoubleConv(nn.Module):
-    def __init__(self, in_channel, out_channel, n=2, use_bn=True):
-        super(DoubleConv, self).__init__()
+class DoubleConvolution(nn.Module):
+    def __init__(self, in_channel, mid_channel, out_channel, n=2, use_bn=True):
+        super(DoubleConvolution, self).__init__()
 
         self.layers = []
         for i in range(1, n + 1):
             if i == 1:
-                x = nn.Conv2d(in_channel, out_channel, (3, 3), stride=1, padding=(1, 1), dilation=1)
+                x = nn.Conv3d(in_channel, mid_channel, (3, 3, 3))
             else:
-                x = nn.Conv2d(out_channel, out_channel, (3, 3), stride=1, padding=(1, 1), dilation=1)
+                x = nn.Conv3d(mid_channel, out_channel, (3, 3, 3))
 
             self.layers.append(x)
 
             if use_bn:
-                self.layers.append(nn.BatchNorm2d(out_channel))
+                if i == 1:
+                    self.layers.append(nn.BatchNorm3d(mid_channel))
+                else:
+                    self.layers.append(nn.BatchNorm3d(out_channel))
                 
             
             self.layers.append(nn.ReLU())
@@ -30,38 +34,40 @@ class DoubleConv(nn.Module):
 
 
 class CreateConvBlock(nn.Module):
-    def __init__(self, in_channel, out_channel, n=2, use_bn=True, apply_pooling=True):
+    def __init__(self, in_channel, mid_channel, out_channel, n=2, use_bn=True, apply_pooling=True):
         super(CreateConvBlock, self).__init__()
         self.apply_pooling = apply_pooling
 
-        self.DoubleConv = DoubleConv(in_channel, out_channel, n=2, use_bn=use_bn)
+        self.DoubleConvolution = DoubleConvolution(in_channel, mid_channel, out_channel, n=2, use_bn=use_bn)
 
         if apply_pooling:
-            self.maxpool = nn.MaxPool2d((2, 2))
+            self.maxpool = nn.MaxPool3d((2, 2, 2))
         
     def forward(self, x):
-        x = self.DoubleConv(x)
-        convResult = x
+        x = self.DoubleConvolution(x)
+        conv_result = x
         if self.apply_pooling:
             x = self.maxpool(x)
 
-        return x, convResult
+        return x, conv_result
 
 
 class CreateUpConvBlock(nn.Module):
-    def __init__(self, in_channel, out_channel, concat_channel,  n=2, use_bn=True):
+    def __init__(self, in_channel, concat_channel, mid_channel, out_channel,  n=2, use_bn=True):
         super(CreateUpConvBlock, self).__init__()
 
-        x = nn.ConvTranspose2d(in_channel, in_channel, (2, 2), stride=(2, 2), padding=(0, 0), dilation=1)
+        x = nn.ConvTranspose3d(in_channel, in_channel, (2, 2, 2), stride=(2, 2, 2), padding=(0, 0, 0), dilation=1)
         self.convTranspose = x
 
-        self.DoubleConv = DoubleConv(in_channel + concat_channel, out_channel, n=2, use_bn=use_bn)
+        self.DoubleConvolution = DoubleConvolution(in_channel + concat_channel, mid_channel, out_channel, n=2, use_bn=use_bn)
 
     def forward(self, x1, x2):
         x1 = self.convTranspose(x1)
+        c = [(i - j)//2 for (i, j) in zip(x2.size()[2:], x1.size()[2:])]
+        x2 = cropping3D(x2, (c[0], c[0]), (c[1], c[1]), (c[2], c[2]))
         x = torch.cat([x2, x1], dim=1)
 
-        x = self.DoubleConv(x)
+        x = self.DoubleConvolution(x)
 
         return x
 
@@ -73,58 +79,52 @@ class UNetModel(nn.Module):
         self.contracts = []
         self.expands = []
 
-        contract = CreateConvBlock(in_channel, 64, n=2, use_bn=use_bn)
+        contract = CreateConvBlock(in_channel, 32, 64, n=2, use_bn=use_bn)
         self.contracts.append(contract)
 
-        contract = CreateConvBlock(64, 128, n=2, use_bn=use_bn)
+        contract = CreateConvBlock(64, 64, 128, n=2, use_bn=use_bn)
         self.contracts.append(contract)
 
-        contract = CreateConvBlock(128, 256, n=2, use_bn=use_bn)
+        contract = CreateConvBlock(128, 128, 256, n=2, use_bn=use_bn)
         self.contracts.append(contract)
 
-        contract = CreateConvBlock(256, 512, n=2, use_bn=use_bn)
-        self.contracts.append(contract)
-
-        self.lastContract = CreateConvBlock(512, 1024, n=2, use_bn=use_bn, apply_pooling=False)
+        self.lastContract = CreateConvBlock(256, 256, 512, n=2, use_bn=use_bn, apply_pooling=False)
 
         self.contracts = nn.ModuleList(self.contracts)
 
         if use_dropout:
             self.dropout = nn.Dropout(0.5)
 
-        expand = CreateUpConvBlock(1024, 512, 512,  n=2, use_bn=use_bn)
+        expand = CreateUpConvBlock(512, 256, 256, 256, n=2, use_bn=use_bn)
         self.expands.append(expand)
 
-        expand = CreateUpConvBlock(512, 256, 256,  n=2, use_bn=use_bn)
-        self.expands.append(expand)
-
-        expand = CreateUpConvBlock(256, 128, 128, n=2, use_bn=use_bn)
+        expand = CreateUpConvBlock(256, 128, 128, 128, n=2, use_bn=use_bn)
         self.expands.append(expand)
          
-        expand = CreateUpConvBlock(128, 64, 64, n=2, use_bn=use_bn)
+        expand = CreateUpConvBlock(128, 64, 64, 64, n=2, use_bn=use_bn)
         self.expands.append(expand)
 
         self.expands = nn.ModuleList(self.expands)
 
-        self.segmentation = nn.Conv2d(64, nclasses, (1, 1), stride=1, dilation=1, padding=(0, 0))
+        self.segmentation = nn.Conv3d(64, nclasses, (1, 1, 1), stride=1, dilation=1, padding=(0, 0, 0))
 
         self.softmax = nn.Softmax(dim=1)
 
     def forward(self, x):
-        convResults = []
+        conv_results = []
         for contract in self.contracts:
-            x, convResult = contract(x)
-            convResults.append(convResult)
+            x, conv_result = contract(x)
+            conv_results.append(conv_result)
 
-        convResults = convResults[::-1]
-        #convResults = nn.ModuleList(convResults)
+        conv_results = conv_results[::-1]
+        #conv_results = nn.ModuleList(conv_results)
 
         x, _ = self.lastContract(x)
         if self.use_dropout:
             x = self.dropout(x)
             
-        for expand, convResult in zip(self.expands, convResults):
-            x = expand(x, convResult)
+        for expand, conv_result in zip(self.expands, conv_results):
+            x = expand(x, conv_result)
 
         x = self.segmentation(x)
         x = self.softmax(x)
@@ -132,8 +132,8 @@ class UNetModel(nn.Module):
         return x
 
 if __name__ == "__main__":
-    model=UNetModel(5 ,3)
-    net_shape = [1, 5, 256, 256]
+    model=UNetModel(1 ,3)
+    net_shape = [1, 1, 28 + 44*2, 44 + 44*2, 44 + 44*2]
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     model.to(device)
