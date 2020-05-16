@@ -63,8 +63,10 @@ class CreateUpConvBlock(nn.Module):
 
     def forward(self, x1, x2):
         x1 = self.convTranspose(x1)
-        c = [(i - j)//2 for (i, j) in zip(x2.size()[2:], x1.size()[2:])]
-        x2 = cropping3D(x2, (c[0], c[0]), (c[1], c[1]), (c[2], c[2]))
+        c = [(i - j) for (i, j) in zip(x2.size()[2:], x1.size()[2:])]
+        hc = [ i // 2 for i in c]
+
+        x2 = cropping3D(x2, (hc[0], hc[0] if c[0]%2 == 0 else hc[0] + 1), (hc[1], hc[1] if c[1]%2 == 0 else hc[1] + 1), (hc[2], hc[2] if c[2]%2 == 0 else hc[2] + 1))
         x = torch.cat([x2, x1], dim=1)
 
         x = self.DoubleConvolution(x)
@@ -133,12 +135,13 @@ class UNetModel(nn.Module):
 
 if __name__ == "__main__":
     model=UNetModel(1 ,3)
-    net_shape = [1, 1, 28 + 44*2, 44 + 44*2, 44 + 44*2]
+    net_shape = [1, 1, 44+ 44*2, 44 + 44*2, 28 + 44*2]
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
     model.to(device)
 
     dummy_img = torch.rand(net_shape).to(device)
+    print("input: ", net_shape)
 
     output = model(dummy_img)
     print('output:', output.size())

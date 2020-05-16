@@ -37,7 +37,8 @@ class UNetSystem(pl.LightningModule):
         label = label.to(self.device, dtype=torch.long)
 
         pred = self.forward(image).to(self.device)
-        pred_last = pred.permute(0, 2, 3, 1).to(self.device)
+        """ Channel last for loss. """
+        pred_last = pred.permute(0, 2, 3, 4, 1).to(self.device)
 
         pred_onehot = torch.eye(self.num_class)[pred.argmax(dim=1)].to(self.device)
         label_onehot = torch.eye(self.num_class)[label].to(self.device)
@@ -64,13 +65,15 @@ class UNetSystem(pl.LightningModule):
         image = image.to(self.device, dtype=torch.float)
         label = label.to(self.device, dtype=torch.long)
         pred = self.forward(image)
+        pred_last = pred.permute(0, 2, 3, 4, 1).to(self.device)
 
         pred_onehot = torch.eye(self.num_class)[pred.argmax(dim=1)]
         label_onehot = torch.eye(self.num_class)[label]
 
         bg_dice, kidney_dice, cancer_dice = self.DICE.computePerClass(label_onehot, pred_onehot)
 
-        loss = self.loss(pred_onehot, label_onehot)
+        loss = self.loss(pred_last, label_onehot)
+        #loss = self.loss(pred_onehot, label_onehot)
         #loss = nn.functional.cross_entropy(pred, label)
 
         tensorboard_logs = {
@@ -114,9 +117,9 @@ class UNetSystem(pl.LightningModule):
     def train_dataloader(self):
         translate = 0
         rotate = 360
-        shear = 0
+        shear = 0.0
         scale = 0.05
-        batch_size = 15
+        batch_size = self.batch_size
 
         train_dataset = UNetDataset(
                 dataset_path = self.dataset_path, 

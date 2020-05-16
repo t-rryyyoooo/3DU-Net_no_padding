@@ -30,7 +30,7 @@ class AffineTransform(object):
     def __call__(self, image, label):
         """
         image : 256 * 256 * x
-        label : 256 * 256 * 1
+        label : 256 * 256 * x
         """
         parameters = makeAffineParameters(image, self.translate_range, self.rotate_range, self.shear_range, self.scale_range)
         affine = makeAffineMatrix(*parameters)
@@ -47,11 +47,12 @@ class GetArrayFromImage(object):
         imageArray = sitk.GetArrayFromImage(image)
         labelArray = sitk.GetArrayFromImage(label).astype(int)
 
-        if image.GetDimension() != 3:
+        if image.GetDimension() != 4:
             imageArray = imageArray[..., np.newaxis]
+            
 
-        labelArray = np.squeeze(labelArray)
-        imageArray = imageArray.transpose((2, 0, 1))
+        imageArray = imageArray.transpose((3, 2, 0, 1))
+        labelArray = labelArray.transpose((2, 0, 1))
 
         return imageArray, labelArray
 
