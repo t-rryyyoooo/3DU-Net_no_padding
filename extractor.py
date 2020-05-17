@@ -6,18 +6,29 @@ from pathlib import Path
 from tqdm import tqdm
 from itertools import product
 from functions import paddingImage, croppingImage, getImageWithMeta, createParentPath
+import re
 
 class extractor():
-    def __init__(self, image, label, patch_size="28-44-44", slide=None, padding=None, only_mask=False):
+    def __init__(self, image, label, patch_size=[28, 44, 44], slide=None, padding=None, only_mask=False):
         self.image = image
         self.label = label
-        self.patch_size = patch_size 
-        self.slide = slide
+
+        self.patch_size = np.array(patch_size)
+
         if padding is None:
             self.padding_patch = np.array((44, 44, 44))
         else:
             self.padding_patch = np.array(padding)
-        self.slide = slide
+
+        """ Check slide size is correct."""
+        if slide is None:
+            self.slide = self.patch_size
+        else:
+            self.slide = np.array(slide)
+            if ((self.patch_size % self.slide) != 0).any():
+                print("[ERROR] Invalid slide size : {}.".format(self.slide))
+                sys.exit()
+
         self.only_mask = only_mask
 
 
@@ -26,16 +37,8 @@ class extractor():
         """ For restoration. """
         self.meta = {}
 
-        """ Get the patch size from string."""
-        matchobj = re.match("([0-9]+)-([0-9]+)-([0-9]+)", self.patch_size)
-        if matchobj is None:
-            print("[ERROR] Invalid patch size : {}.".fotmat(self.patch_size))
-            sys.exit()
-
-        self.patch_size = np.array([int(s) for s in matchobj.groups()])
-
         """ Caluculate each padding size for label and image to clip correctly and pad them."""
-        padding_size = self.patch_size - (np.array(self.label.GetSize()) % self.patch_size)
+        padding_size = self.patch_size - (np.array(self.label.GetSize()) % self.patch_size) + (self.patch_size - self.slide)
 
         lower_padding_size_label = padding_size // 2
         upper_padding_size_label = np.where((padding_size % 2) != 0, padding_size // 2 + 1, padding_size // 2)
@@ -51,13 +54,6 @@ class extractor():
 
 
         self.meta["padded_label"] = padded_label
-
-        """ Check slide size is correct."""
-        if self.slide is None:
-            self.slide = self.patch_size
-        else:
-            if (self.patch_size % np.array(self.slide) != 0).any():
-                print("[ERROR] Invalid slide size : {}.".format(self.slide))
 
 
         """ Caluculate the patch size. """

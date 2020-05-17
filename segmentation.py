@@ -3,11 +3,12 @@ import numpy as np
 import argparse
 from functions import createParentPath, getImageWithMeta
 from pathlib import Path
-from slicer import slicer as sler
+from extractor import extractor as extor
 from tqdm import tqdm
 import torch
 import cloudpickle
 from UNet.model import UNetModel
+import re
 
 
 def ParseArgs():
@@ -16,15 +17,11 @@ def ParseArgs():
     parser.add_argument("imageDirectory", help="$HOME/Desktop/data/kits19/case_00000")
     parser.add_argument("modelweightfile", help="Trained model weights file (*.hdf5).")
     parser.add_argument("savePath", help="Segmented label file.(.mha)")
-    parser.add_argument("-g", "--gpuid", nargs="+", help="ID of GPU to be used for segmentation.", type=int)
-
-    parser.add_argument("--widthSize", default=15, type=int)
-    parser.add_argument("--paddingSize", default=100, type=int)
-    parser.add_argument("--patchSize", help="256-256-3", default="256-256-3")
-    parser.add_argument("--noFlip", action="store_true")
-
-
     
+    parser.add_argument("--patch_size", help="28-44-44", default="28-44-44")
+    parser.add_argument("--slide", help="2-2-2", default=None)
+    parser.add_argument("--padding", help="44-44-44", default=None)
+
     args = parser.parse_args()
     return args
 
@@ -38,17 +35,49 @@ def main(args):
     label = sitk.ReadImage(str(labelFile))
     image = sitk.ReadImage(str(imageFile))
 
-    slicer = sler(
+    """ Get the patch size from string."""
+    matchobj = re.match("([0-9]+)-([0-9]+)-([0-9]+)", args.patch_size)
+    if matchobj is None:
+        print("[ERROR] Invalid patch size : {}.".fotmat(args.patch_size))
+        sys.exit()
+
+    patch_size = [int(s) for s in matchobj.groups()]
+
+    """ Get the slide size from string."""
+    if args.slide is not None:
+        matchobj = re.match("([0-9]+)-([0-9]+)-([0-9]+)", args.slide)
+        if matchobj is None:
+            print("[ERROR] Invalid patch size : {}.".fotmat(args.slide))
+            sys.exit()
+
+        slide = [int(s) for s in matchobj.groups()]
+    else:
+        slide = None
+
+
+    """ Get the padding size from string."""
+    if args.padding is not None:
+        matchobj = re.match("([0-9]+)-([0-9]+)-([0-9]+)", args.padding)
+        if matchobj is None:
+            print("[ERROR] Invalid patch size : {}.".fotmat(args.padding))
+            sys.exit()
+
+        padding = [int(s) for s in matchobj.groups()]
+    
+    else:
+        padding = None
+
+
+    extractor = extor(
             image = image, 
             label = label, 
-            outputImageSize = args.patchSize, 
-            widthSize = args.widthSize, 
-            paddingSize = args.paddingSize, 
-            noFlip = args.noFlip
+            patch_size = patch_size, 
+            slide = slide, 
+            padding = padding
             )
 
-    slicer.execute()
-    _, cuttedImageArrayList = slicer.output("Array")
+    extractor.execute()
+    image_array_list, l  = extractor.output("Array")
 
     """ Load model. """
 
@@ -60,24 +89,22 @@ def main(args):
 
     """ Segmentation module. """
 
-    segmentedArrayList = [[] for _ in range(2)]
-    for i in range(2):
-        length = len(cuttedImageArrayList[i])
-        for x in tqdm(range(length), desc="Segmenting images...", ncols=60):
-            imageArray = cuttedImageArrayList[i][x]
-            imageArray = imageArray.transpose((2, 0, 1))
-            imageArray = torch.from_numpy(imageArray[np.newaxis, ...]).to(device, dtype=torch.float)
-            
-            segmentedArray = model(imageArray)
-            segmentedArray = segmentedArray.to("cpu").detach().numpy().astype(np.float)
-            segmentedArray = np.squeeze(segmentedArray)
-            segmentedArray = np.argmax(segmentedArray, axis=0).astype(np.uint8)
-            segmentedArrayList[i].append(segmentedArray)
+    segmented_array_list = []
+    cnt = 0
+    for image_array in tqdm(image_array_list, desc="Segmenting images...", ncols=60):
+        image_array = image_array.transpose(2, 0, 1)
+        image_array = torch.from_numpy(image_array[np.newaxis, ...]).to(device, dtype=torch.float)
+
+        segmented_array = model(image_array)
+        segmented_array = segmented_array.to("cpu").detach().numpy().astype(np.float)
+        segmented_array = np.squeeze(segmented_array)
+        segmented_array = np.argmax(segmented_array, axis=0).astype(np.uint8)
+
+        segmented_array_list.append(segmented_array)
 
     """ Restore module. """
-    segmentedArray = slicer.restore(segmentedArrayList)
+    segmented = extractor.restore(segmented_array_list)
 
-    segmented = getImageWithMeta(segmentedArray, label)
     createParentPath(args.savePath)
     print("Saving image to {}".format(args.savePath))
     sitk.WriteImage(segmented, args.savePath, True)
