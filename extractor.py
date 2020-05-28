@@ -132,8 +132,8 @@ class extractor():
             createParentPath(str(save_image_path))
 
         for i, (image, label) in tqdm(enumerate(zip(self.image_list, self.label_list)), desc="Saving images and labels...", ncols=60):
-            save_image_path = save_path / patientID / "image_{:03d}.mha".format(i)
-            save_label_path = save_path / patientID / "label_{:03d}.mha".format(i)
+            save_image_path = save_path / patientID / "image_{:04d}.mha".format(i)
+            save_label_path = save_path / patientID / "label_{:04d}.mha".format(i)
 
             sitk.WriteImage(image, str(save_image_path), True)
             sitk.WriteImage(label, str(save_label_path), True)
